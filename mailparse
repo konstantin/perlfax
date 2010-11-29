@@ -1,0 +1,14 @@
+#!/bin/bash
+LOG=$1
+if [ -z "$LOG" ]; then
+	LOG=/dev/null
+fi
+while [ 1 ]; do
+	/usr/local/bin/mailparse.pl
+	RETVAL=$?;
+	if [ $RETVAL == 0 ];then
+		echo "server was shutdown normally" >> $LOG
+		exit;
+	fi
+	echo "our server died, going to start another one" $LOG
+done 

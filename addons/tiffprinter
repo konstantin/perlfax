@@ -1,0 +1,299 @@
+#!/usr/bin/perl -w
+#
+#######################################################################
+#
+#                   This PERL script emulates TIFF printer 
+#  
+#  *** Introduction ***
+#  
+#  The main idea is to create TIFF files in *nix/windows mixed environment
+#  by printing to a printer. This is called PRINT-TO-TIFF. To create a TIFF
+#  file a user just prints from any application to a network printer. The
+#  output TIFF file is sent to a user via email as an attachment.  
+#  The printer is available to to windows users via SAMBA and to *nix
+#  users via CUPS. TIFF printer is a postscript printer, i.e. Windows 
+#  machines should use postscript driver and *nix machines can use it
+#  natively. 
+#  
+#  *** Legal ****
+#
+#  Written by Konstantin Antselovich <konstantin@antselovich.com>
+#  (C) 2009-2010. Some part of the program is taken from
+#  salsafax script from http://www.purpel3.nl
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  This program is free software; you can redistribute it
+#  and/or modify it under the terms of the GNU General Public
+#  License as published by the Free Software Foundation; version 2
+#  of the License.  http://www.gnu.org/licenses/gpl-2.0.txt
+#
+#
+#  *** Requirements ***
+#
+#    perl (I tested with v5.6 and 5.8.8, it's likely any 5.x will do)
+#    perl module Getopt-Long 
+#    perl module Mail-Sendmail
+#    perl module MIME-Lite
+#    CUPS (standard printing system on *nix)
+#    sendmail (or postfix, that is standard thing on *nix)
+#    ghostscript 
+#     
+#
+#  *** Installation ***
+#
+#  1. copy and paste this to a text file, or download gz from
+#  http://konstantin.antselovich.com/perl/tiffprinter.gz
+#  
+#  2. copy it to /usr/lib/cups/backend
+#     `chmod +x tiffprinter`
+#     then run this script from the commandline:
+#     `echo blah | ./tiffprinter'
+#     This will tell if there are any dependencies unsolved.
+#
+#  3. Create new CUPS printer by running this command 
+#     `lpadmin -p tiffprinter -E -v tiffprinter`
+#
+#  4. Check you cups config file, it should look similar to this:
+#     
+#    
+#    ............................................
+# 	[global] 
+#     	....
+#           printcap name = /etc/printcap
+#       	printing = cups
+#       	use client driver = Yes
+#       	printer admin = <root or yourloginname>
+# 	[printers]
+#      	....
+#        	printable = Yes
+#		browseble = No
+#		Show Add printer wizard = Yes
+#		....
+#     ...............................................
+#
+#
+#  5.  Installation on the clients
+#       
+#      Windows: go START->CONTROL PANEL->PRINERS AND FAXES->ADD PRINTER
+#			 ->NETWORK PRINTER-> browse for the printer, right-click
+#			 opt "Connect". At this point windows will offer you to 
+#			 install a new driver. Pick any Color laser postscript 
+#			 printer. I suggest this one:
+#                        "Schlumberger 5232 Color PostScript Printer v50.3"
+# 			
+#       *nix:   setup network printer as ipp://<yourhost>/printers/tiffprinter
+# 		     pick postscript printer. 
+#               
+#  6.  Email issues. 
+# 
+#      Emails will be send to <user>@<this.host.name> If this server doesn't 
+#      handle mail for your domain, configure this mail server to use your
+#      real mail server as a 'smarthost', and add the name of this server 
+#      to your real mailserver as 'local'
+#
+#
+#  *** Troubleshooting ***
+#  
+#  Check log files for samba and cups for any errors.
+#
+#
+################ And finally, the text of the program ########################
+
+use strict;
+use utf8;
+use Getopt::Long;
+use MIME::Lite;
+use Mail::Sendmail;
+
+### constants you must check if they are ok
+
+# gostscript binary
+my $GS="/usr/bin/gs";
+
+# the command to convert postscript to tiff
+my $PS2TIFF = "$GS -dBATCH -dNOPAUSE -sDEVICE=tiffg4 -sOutputFile";               
+
+# the default mailaddress for errormessages
+my $MAILADDRESS = 'konstantin@antselovich.com';
+
+
+### constants you can alter but should consider not to
+
+# the directory to store temporary files
+my $TMPDIR = "/tmp/";
+
+# the name of this tool                           
+my $MYNAME = "tiffprinter";
+
+# the location of sendmail binary                     
+my $SENDMAIL = "/usr/sbin/sendmail";
+ 
+# the name of the logfile - debugging sessions only           
+my $LOGFILE = $TMPDIR . $MYNAME . ".log";
+
+# the name of the postscript temporary file       
+my $PSFILE = $TMPDIR . $MYNAME . ".ps." . $$;
+
+# the name of the tiff tempolary file   
+my $TIFFFILE = $TMPDIR . $MYNAME . ".tiff." . $$; 
+
+# from email address that tiffprinter uses to send emails
+my $FROM = 'FAX RECIPIENT <pls.enter.fax.nun.here@efax.fax>';
+ 
+
+########################################################################
+#  from here on, leave the code alone, unless you are really sure
+########################################################################
+
+my $mailaddress = ""; # how do we treat the errormessages
+my $lpuser = "";      # username retrieved from lprng or lpd commandline
+my $lphost = "";      # hostname retrieved from lprng or lpd commandline
+my @emaillines;       # stores the documentlines containing EMAILDOC
+my $errormsg ="";     # stores error message that gets send via email
+
+# check some dependencies
+if ( ! -d $TMPDIR ) {
+  print("Error: temporary directory not found: ", $TMPDIR );
+  exit 1;
+}
+
+if ( ! -e $SENDMAIL ) {
+  Log("Error: Sendmail command not found: ", $SENDMAIL );
+  exit 1;
+}
+
+if ( ! -e $GS ) {
+  Log("Error: ghostscript command not found: ", $PS2TIFF );
+  exit 1;
+}
+
+# get usefull parameters
+my $cupsfile = $ARGV[5];      # CUPS parses a filename with the printdata as the 6th parametr
+                              # this could be undef (after lpr -d blah) or a filename (after a samba action)
+my $cupsuser = $ARGV[1];      # CUPS paresed the username with the printdata as the 2nd parameter
+                              # this is usually a user from localhost
+my $filename = $ARGV[2];      # CUPS parces a file names that was submitted as print job 4th parameter 
+
+my $printjob = $ARGV[0];      # CUPS parses a print job number as 1st parameter
+
+# clean up filename from "smbprn.<num>" pattern
+$filename =~ s/smbprn\.\d{0,8}//;
+
+ #as we got some useful info from CUPS, now we can compose a text message that will be sent
+ # along with created TIFF file
+my $MSGBODY = "Dear " . $cupsuser . ",\n\n" 
+              . "Fax file for \"" . $filename . "\" has been attached to this msg \n"
+              . "To send it as a fax please FORWARD  this message TO: <fax.number\@efax.fax>,\n"
+              . "where 'fax.number' is the correct fax number of your recipient\n\n"   
+              . "\n"
+              . "Produced by TIFF Printer"; 
+
+
+GetOptions( 'h=s' => \$lphost,  # LPD and LPRng parse host and user name under the -h and -n parameter
+            'n=s' => \$lpuser); # the postscript is parsed to it in a pipe - to be found in STDIN
+
+
+# ok lets find out where we can send the mail to
+if ( ( $lphost ) and ( $lpuser ) ) {  #if the user and host can be found on the commandline
+  $mailaddress = $lpuser . '@' . $lphost ;
+} elsif ( $cupsuser) {
+  $mailaddress = $cupsuser . '@localhost' ;
+} else {
+  $mailaddress = $MAILADDRESS;
+  $errormsg = "cannot get email address";
+  &SendErrorMail($errormsg);
+}
+
+# where is the printerdata?
+if ( ( $cupsfile ) and ( -e $cupsfile ) ) {
+  $PSFILE = $cupsfile;
+} else {
+  &SavePostscriptdata;
+}
+
+#####################################################################
+#  mail subroutine
+#####################################################################
+# ok we have a postscriptfile, now we are going to convert it and send
+# it by mail
+
+# carry out ps2tiff on the ps-file and return the output into perl
+
+my $status = `$PS2TIFF=$TIFFFILE $PSFILE`;
+if ( $status ne "" ) {
+   Log($status); 
+}
+
+# check if we got output tiff file
+if ( ! -e $TIFFFILE ) {
+  $errormsg =   "Error: tiffprinter was unable to create file $TIFFFILE because: ";
+  Log($errormsg, $TIFFFILE );
+  SendErrorMail($errormsg);
+}
+ # create mail object mime mixed multipart
+my $msg = MIME::Lite->new( From    => $FROM, 
+                           To      => $mailaddress,
+                           Subject => "Fax file for " . "\"$filename\"" . " is  attached",
+                           Type    => 'multipart/mixed');
+
+ # attache file part
+$msg->attach( Type       => 'image/tiff',
+              Path	 => $TIFFFILE, 
+              Filename   => "fax.tiff" );
+
+
+ # attach msg body part
+$msg->attach( Type  	  => 'TEXT',
+              Disposition => 'inline',
+              Data        => $MSGBODY);
+
+ # obviously, send a message
+$msg->send();
+
+# delete PS and TIFF files  in any case
+unlink $PSFILE;
+unlink $TIFFFILE;
+
+# always exit gracefully.
+exit 0;
+
+
+### sub ###################################################
+#  save the information in the pipe to the ps tmp file
+
+sub SavePostscriptdata {
+
+  open PS, ">".$PSFILE or die("Sorry, cannot open temporary postscript file $PSFILE .\n");
+  while (<STDIN>) {
+    print PS $_ ;
+  }
+  close PS;
+}
+
+#### sub #################################################
+
+sub SendErrorMail  {
+
+  my $text = @_;
+
+  sendmail( To => $mailaddress ,
+            From => $FROM, 
+            Subject => 'Your TIFF print job failed.',
+            Message => $text
+          );
+
+  Log("sent errormail to $mailaddress");
+
+}
+
+
+# sub #################################################
+sub Log {
+  open LG, ">>" . $LOGFILE;
+  print LG join(" ", @_), "\n";
+  close LG;
+}

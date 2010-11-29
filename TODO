@@ -1,0 +1,30 @@
+OVERALL
+
+ * Better docs
+ * FEATURE: install script
+ * FAATURE: create rpm and spec file 
+
+email2fax
+
+ * error checking all around
+ * refractoring for files_obj and create, delete, close temp file functions
+ * read config from file
+ * better logging
+ * FEATURE:  better status file 
+
+mailparse.pl
+
+ * error checking all around
+ * read confg from file
+ * proper logging
+ * FEATURE: create a tiff attachment out of email message,
+            if email2fax sent a msg w/out tiff attachment
+ * FEATURE: create a tiff attachment out other attachments, like images, PDFs, open office docs, etc
+         
+mailparse
+
+ * proper config and logging
+         
+mailparse.init.d
+
+ * proper start so init script can report success or failure on start 

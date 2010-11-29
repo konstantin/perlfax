@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE article
+  PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN" "http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd">
+<article lang="">
+   <para>OVERVIEW</para>
+   <para/>
+   <para>A simple email2fax gateway for asterisk. </para>
+   <para/>
+   <para>email2fax sits between  MTA and asterisk server, it takes an email msg with TIFF attachment from MTA over standard input, extracts TIFF file and fax number and creates so called call file. Asterisk then reads a call file and places an outbound call fax call to transmit the TIFF.</para>
+   <para/>
+   <para>The difference from other systems is that email2fax does not do any parsing and processing of messages, instead it talks to a mailparse server over TCP, which does all email parsing and processing. </para>
+   <para/>
+   <para>I realized that I could not use existing solutions because all email parsing and processing is done on the same machine where asterisk is installed, and I have a old and overloaded asterisk server, so I needed to “offload” any non-trivial tasks to another system.</para>
+   <para/>
+   <para>SIMILAR SYSTEMS</para>
+   <para/>
+   <para>mail2fax (bash script, requires AstFax)</para>
+   <para>http://www.ocg.ca/generationd/Pages/Downloads/Files.php?downloads=asterisk</para>
+   <para/>
+   <para>email2fax (improvement over mail2fax)</para>
+   <para>
+      <ulink url="http://wpkg.org/email2fax/index.php/Download">http://wpkg.org/email2fax/index.php/Download</ulink> 
+   </para>
+   <para/>
+   <para>AstFax</para>
+   <para>http://www.inter7.com/?page=astfax</para>
+   <para/>
+   <para>REQUIREMENTS</para>
+   <para/>
+   <para> Asterisk server</para>
+   <para/>
+   <para>  Asterisk with SendFax() capability ( i.e. properly complied asterisk 1.6.x)</para>
+   <para>  perl  for email2fax.pl </para>
+   <para>  MTA </para>
+   <para/>
+   <para> Mail parser server</para>
+   <para> </para>
+   <para>  perl</para>
+   <para>  Mail::Message module </para>
+   <para>  Mail::Address  module</para>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para>INSTALL</para>
+   <para/>
+   <para>  Asterisk server </para>
+   <para/>
+   <para>  # place emal2fax.pl into /usr/local/bin and add executable permission</para>
+   <para>  cp email2parse.pl /usr/local/bin/</para>
+   <para>  chmod +x /usr/local/bin/email2parse.pl</para>
+   <para/>
+   <para>  # edit email2fax.pl $CONFIG section to properly set caller ID, country code,</para>
+   <para>  # area code, asterisk outgpoing directory, etc </para>
+   <para>  # </para>
+   <para>   vim /usr/local/bin/email2parse.pl</para>
+   <para>   </para>
+   <para>   # create 'fax-out' context in asterisk by editing /etc/asterisk/extentions.conf</para>
+   <para>   # copy-paste content from fax_out.conf</para>
+   <para>   # </para>
+   <para/>
+   <para>   See MTA integration</para>
+   <para/>
+   <para>  Mail parser server</para>
+   <para> </para>
+   <para>  # place 'mailparse' and 'mailparse.pl' to /usr/local/bin/,</para>
+   <para>   cp mailparse mailparse.pl /usr/local/bin/</para>
+   <para>  #add execute permission</para>
+   <para>   chmod +x /usr/local/bin/{mailparse,mailparse.pl}</para>
+   <para/>
+   <para>   #place mailparse.init.d into /etc/init.d/</para>
+   <para>   cp mailparse.init.d /etc/init.d/mailparse</para>
+   <para/>
+   <para>   #enable init.d script and start mailparse daemon</para>
+   <para>   chkconfig –add mailparse</para>
+   <para>   chkconfig mailparse on</para>
+   <para>   /etc/init.d/mailparse start</para>
+   <para/>
+   <para>   # make sure service is running</para>
+   <para>   /etc/init.d/mailparse status</para>
+   <para> </para>
+   <para>   # *** FROM ASTERISK SERVER***</para>
+   <para>   # make sure you can connect to mail parse server</para>
+   <para>   telnet &lt;mailparse srv ip addr&gt;  7777</para>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para> </para>
+   <para>MTA integration</para>
+   <para/>
+   <para>The idea is create a configuration where all emails sent to specific domain are passed to a program.  I'll use efax.fax domain in example below:</para>
+   <para>    </para>
+   <para>Sendmail</para>
+   <para/>
+   <orderedlist>
+      <listitem>
+         <para>local mailer</para>
+      </listitem>
+   </orderedlist>
+   <para/>
+   <para>         add to /etc/mail/virtusertable</para>
+   <para/>
+   <para>        +# add email2fax virtual user,  redirect all mail sent to efax.fax to that user</para>
+   <para>          +@efax.fax                       email2fax</para>
+   <para/>
+   <para>         add to /etc/aliases</para>
+   <para>         +# alias  for email2fax programm</para>
+   <para>         +email2fax:      "|/usr/bin/perl /usr/local/bin/email2fax.pl"</para>
+   <para/>
+   <para>         # enable perl interpreter and email2fax in sendmail restricted shell</para>
+   <para>         cd /etc/smrsh/</para>
+   <para>        ln -s /usr/bin/perl</para>
+   <para>        ln -s /usr/local/bin/email2fax.pl</para>
+   <para/>
+   <para>        # restart sendmail to rebuild config files</para>
+   <para>         /etc/init.d/sendmail restart</para>
+   <para/>
+   <orderedlist>
+      <listitem>
+         <para>special mailer</para>
+         <para/>
+         <para>In some cases, when sendmail has it's local delivery programm overwritten</para>
+         <para>(integration with cyrus imap server, etc) the above solution won't work.</para>
+         <para/>
+         <para>The work around is to configure a special mailer to handle faxes using standard FAX mailer from Hylafax project that comes with sendmail.</para>
+         <para/>
+         <para>Add to /etc/mail/sendmail.mc   at the end of 'define' section</para>
+         <para/>
+         <para>+dnl # fax mailer</para>
+         <para>+define(`FAX_MAILER_PATH',`/usr/local/bin/email2fax.pl, U=asterisk:asterisk, W=15m')dnl</para>
+         <para>+define(`FAX_MAILER_ARGS',`email2fax.pl $u $f')dnl</para>
+         <para>+define(`FAX_MAILER_MAX',`31457280')dnl</para>
+         <para>+dnl #</para>
+         <para/>
+         <para>Add /etc/mail/sendmail.mc at the end of the file, near MAILER section</para>
+         <para>+MAILER(fax)dnl</para>
+         <para/>
+         <para> find and patch fax.m4 file, (normally /usr/share/sendmail-cf/mailer/fax.m4 ) </para>
+         <para> add 'S' flag into flags F=</para>
+         <para/>
+         <para>-Mfax,          P=FAX_MAILER_PATH, F=DFMhu, S=14, R=24,</para>
+         <para>+Mfax,          P=FAX_MAILER_PATH, F=DFMhuS, S=14, R=24,</para>
+         <para/>
+         <para>add to /etc/mail/virtusertable</para>
+         <para/>
+         <para>+# add email2fax virtual user,  redirect all mail sent to efax.fax to that user</para>
+         <para>+@efax.fax                       <ulink url="mailto:email2fax@localhost.fax">email2fax@localhost.fax</ulink>
+         </para>
+         <para/>
+         <para>add entry into mailertable /etc/mail/mailertable</para>
+         <para># redirect all faxes to FAX mailer</para>
+         <para>efax.fax                fax:localhost</para>
+         <para>localhost.fax          fax:localhost</para>
+         <para/>
+      </listitem>
+      <listitem>
+         <para> restart sendmail to rebuild config file   `/etc/init.d/sendmail restart`</para>
+         <para/>
+      </listitem>
+   </orderedlist>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para/>
+   <para>TESTING AND TROUBLESHOOTING</para>
+   <para/>
+   <para/>
+   <para># start server troubleshooting mode:</para>
+   <para># all logging will be done to standard output</para>
+   <para>/usr/local/bin/mailparse  </para>
+   <para/>
+   <para># save email message addressed to &lt;fax number&gt;@efax.fax with TIFF </para>
+   <para># attachment and pass it to email2fax via stdin</para>
+   <para>cat Message.eml | ./email2fax.pl</para>
+   <para/>
+   <para># look in /var/tmp/  for email2fax-* files</para>
+</article>

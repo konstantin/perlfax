@@ -1,0 +1,158 @@
+OVERVIEW
+
+A simple email2fax gateway for asterisk. 
+
+email2fax sits between  MTA and asterisk server, it takes an email msg with TIFF
+attachment from MTA over standard input, extracts TIFF file and fax number and
+creates so called call file. Asterisk then reads a call file and
+places an outbound call fax call to transmit the TIFF.
+
+The difference from other systems is that email2fax does not do any parsing and
+processing of messages, instead it talks to a mailparse server over TCP,
+which does all email parsing and processing. 
+
+I realized that I could not use existing solutions because all email parsing and
+processing is done on the same machine where asterisk is installed,
+and I have a old and overloaded asterisk server,
+so I needed to “offload” any non-trivial tasks to another system.
+
+SIMILAR SYSTEMS
+
+mail2fax (bash script, requires AstFax)
+http://www.ocg.ca/generationd/Pages/Downloads/Files.php?downloads=asterisk
+
+email2fax (improvement over mail2fax)
+http://wpkg.org/email2fax/index.php/Download 
+
+AstFax
+http://www.inter7.com/?page=astfax
+
+REQUIREMENTS
+
+ Asterisk server
+
+  Asterisk with SendFax() capability ( i.e. properly complied asterisk 1.6.x)
+  perl  for email2fax.pl 
+  MTA 
+
+ Mail parser server
+ 
+  perl
+  Mail::Message module 
+  Mail::Address  module
+  
+INSTALL
+
+  Asterisk server 
+
+  # place emal2fax.pl into /usr/local/bin and add executable permission
+  cp email2parse.pl /usr/local/bin/
+  chmod +x /usr/local/bin/email2parse.pl
+
+  # edit email2fax.pl $CONFIG section to properly set caller ID, country code,
+  # area code, asterisk outgpoing directory, etc 
+  # 
+  vim /usr/local/bin/email2parse.pl
+   
+  # create 'fax-out' context in asterisk by editing /etc/asterisk/extentions.conf
+  # copy-paste content from fax_out.conf
+  # 
+
+   See MTA integration
+
+  Mail parser server
+ 
+  # place 'mailparse' and 'mailparse.pl' to /usr/local/bin/,
+   cp mailparse mailparse.pl /usr/local/bin/
+  #add execute permission
+   chmod +x /usr/local/bin/{mailparse,mailparse.pl}
+
+   #place mailparse.init.d into /etc/init.d/
+   cp mailparse.init.d /etc/init.d/mailparse
+
+   #enable init.d script and start mailparse daemon
+   chkconfig –add mailparse
+   chkconfig mailparse on
+   /etc/init.d/mailparse start
+
+   # make sure service is running
+   /etc/init.d/mailparse status
+ 
+   # *** FROM ASTERISK SERVER***
+   # make sure you can connect to mail parse server
+   telnet <mailparse srv ip addr>  7777
+ 
+MTA integration
+
+The idea is create a configuration where all emails sent to specific domain are passed to a program.  I'll use efax.fax domain in example below:
+    
+Sendmail
+
+1. local mailer
+
+         add to /etc/mail/virtusertable
+
+	+# add email2fax virtual user,  redirect all mail sent to efax.fax to that user
+          +@efax.fax                       email2fax
+
+         add to /etc/aliases
+         +# alias  for email2fax programm
+         +email2fax:      "|/usr/bin/perl /usr/local/bin/email2fax.pl"
+
+         # enable perl interpreter and email2fax in sendmail restricted shell
+         cd /etc/smrsh/
+	ln -s /usr/bin/perl
+	ln -s /usr/local/bin/email2fax.pl
+
+        # restart sendmail to rebuild config files
+         /etc/init.d/sendmail restart
+
+2. special mailer
+
+In some cases, when sendmail has it's local delivery programm overwritten
+(integration with cyrus imap server, etc) the above solution won't work.
+
+The work around is to configure a special mailer to handle faxes using standard FAX mailer from Hylafax project that comes with sendmail.
+
+Add to /etc/mail/sendmail.mc   at the end of 'define' section
+
++dnl # fax mailer
++define(`FAX_MAILER_PATH',`/usr/local/bin/email2fax.pl, U=asterisk:asterisk, W=15m')dnl
++define(`FAX_MAILER_ARGS',`email2fax.pl $u $f')dnl
++define(`FAX_MAILER_MAX',`31457280')dnl
++dnl #
+
+Add /etc/mail/sendmail.mc at the end of the file, near MAILER section
++MAILER(fax)dnl
+
+ find and patch fax.m4 file, (normally /usr/share/sendmail-cf/mailer/fax.m4 ) 
+ add 'S' flag into flags F=
+
+-Mfax,          P=FAX_MAILER_PATH, F=DFMhu, S=14, R=24,
++Mfax,          P=FAX_MAILER_PATH, F=DFMhuS, S=14, R=24,
+
+add to /etc/mail/virtusertable
+
++# add email2fax virtual user,  redirect all mail sent to efax.fax to that user
++@efax.fax                       email2fax@localhost.fax
+
+add entry into mailertable /etc/mail/mailertable
+# redirect all faxes to FAX mailer
+efax.fax                fax:localhost
+localhost.fax          fax:localhost
+
+3.  restart sendmail to rebuild config file   `/etc/init.d/sendmail restart`
+
+
+TESTING AND TROUBLESHOOTING
+
+
+# start server troubleshooting mode:
+# all logging will be done to standard output
+/usr/local/bin/mailparse  
+
+# save email message addressed to <fax number>@efax.fax with TIFF 
+# attachment and pass it to email2fax via stdin
+cat Message.eml | ./email2fax.pl
+
+# look in /var/tmp/  for email2fax-* files
